@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +14,7 @@ from app.models.profile import UserProfile
 from app.schemas.chat import ChatMessageCreate, ChatMessageRead, ChatResponse
 from app.services.chat import ChatServiceError, build_assistant_reply
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -57,6 +60,7 @@ def create_chat_message(
             history=history,
         )
     except ChatServiceError as exc:
+        logger.exception("AI chat failed for profile_id=%s", profile.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"AI service is unavailable: {exc}",
