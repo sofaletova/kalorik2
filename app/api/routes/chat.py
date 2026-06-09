@@ -20,16 +20,20 @@ def get_chat_messages(
     profile: UserProfile = Depends(get_profile_or_404),
     db: Session = Depends(get_db),
 ) -> list[ChatMessage]:
-    return list(
-        db.scalars(
-            select(ChatMessage)
-            .where(ChatMessage.user_profile_id == profile.id)
-            .order_by(ChatMessage.created_at)
-        ).all()
-    )
+    messages = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.user_profile_id == profile.id)
+        .order_by(ChatMessage.created_at)
+    ).all()
+
+    return list(messages)
 
 
-@router.post("/profiles/{profile_id}/chat/messages", response_model=ChatResponse, status_code=201)
+@router.post(
+    "/profiles/{profile_id}/chat/messages",
+    response_model=ChatResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_chat_message(
     payload: ChatMessageCreate,
     profile: UserProfile = Depends(get_profile_or_404),
@@ -45,8 +49,13 @@ def create_chat_message(
             ).all()
         )
     )
+
     try:
-        assistant_content = build_assistant_reply(profile, payload.content, history)
+        assistant_content = build_assistant_reply(
+            profile=profile,
+            message=payload.content,
+            history=history,
+        )
     except ChatServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -67,8 +76,12 @@ def create_chat_message(
         content=assistant_content,
     )
     db.add(assistant_message)
+
     db.commit()
     db.refresh(user_message)
     db.refresh(assistant_message)
 
-    return ChatResponse(user_message=user_message, assistant_message=assistant_message)
+    return ChatResponse(
+        user_message=user_message,
+        assistant_message=assistant_message,
+    )
