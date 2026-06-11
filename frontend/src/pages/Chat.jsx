@@ -201,6 +201,7 @@ export default function Chat() {
   const [sendError, setSendError] = useState("");
 
   const scrollRef = useRef(null);
+  const fileRef = useRef(null);
 
   const loadHistory = useCallback(() => {
     setLoadState("loading");
@@ -234,6 +235,40 @@ export default function Chat() {
     }
   }, [messages, sending]);
 
+  const appendChatResponse = (tempId, res) => {
+    setMessages((m) => {
+      const withoutTemp = m.filter((x) => x.id !== tempId);
+
+      return [
+        ...withoutTemp,
+        {
+          id: res.user_message.id,
+          role: "user",
+          content: res.user_message.content,
+        },
+        {
+          id: res.assistant_message.id,
+          role: "assistant",
+          content: res.assistant_message.content,
+        },
+      ];
+    });
+  };
+
+  const handleSendError = (tempId, err, fallback) => {
+    const message = err.message || fallback;
+
+    setSendError(message);
+    setMessages((m) =>
+      m.map((x) => (x.id === tempId ? { ...x, failed: true } : x))
+    );
+
+    if (isProfileNotFoundError(message)) {
+      setLoadError(message);
+      setLoadState("error");
+    }
+  };
+
   const send = (textArg) => {
     const content = (textArg ?? input).trim();
 
@@ -255,39 +290,45 @@ export default function Chat() {
 
     api
       .sendChatMessage(content)
-      .then((res) => {
-        setMessages((m) => {
-          const withoutTemp = m.filter((x) => x.id !== tempUser.id);
-
-          return [
-            ...withoutTemp,
-            {
-              id: res.user_message.id,
-              role: "user",
-              content: res.user_message.content,
-            },
-            {
-              id: res.assistant_message.id,
-              role: "assistant",
-              content: res.assistant_message.content,
-            },
-          ];
-        });
-      })
-      .catch((err) => {
-        const message = err.message || "Сообщение не отправлено";
-
-        setSendError(message);
-        setMessages((m) =>
-          m.map((x) => (x.id === tempUser.id ? { ...x, failed: true } : x))
-        );
-
-        if (isProfileNotFoundError(message)) {
-          setLoadError(message);
-          setLoadState("error");
-        }
-      })
+      .then((res) => appendChatResponse(tempUser.id, res))
+      .catch((err) => handleSendError(tempUser.id, err, "Сообщение не отправлено"))
       .finally(() => setSending(false));
+  };
+
+  const sendImage = (file) => {
+    if (!file || sending || loadState !== "ready") return;
+
+    if (!file.type.startsWith("image/")) {
+      setSendError("Загрузите файл изображения.");
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setSendError("Фото слишком большое. Загрузите изображение до 8 МБ.");
+      return;
+    }
+
+    const content = input.trim();
+    setInput("");
+    setSendError("");
+
+    const tempUser = {
+      id: "tmp-img-" + Date.now(),
+      role: "user",
+      content: `[Фото еды] ${content || file.name}`,
+    };
+
+    setMessages((m) => [...m, tempUser]);
+    setSending(true);
+
+    api
+      .sendChatImage(file, content)
+      .then((res) => appendChatResponse(tempUser.id, res))
+      .catch((err) => handleSendError(tempUser.id, err, "Фото не отправлено"))
+      .finally(() => {
+        setSending(false);
+        if (fileRef.current) fileRef.current.value = "";
+      });
   };
 
   const status = getChatStatus(loadState, loadError || sendError);
@@ -487,7 +528,7 @@ export default function Chat() {
         >
           <Icon name="alert" size={15} />
 
-          <span style={{ lineHeight: 1.4 }}>
+          <span style={{ lineHeight: 1.4, wordBreak: "break-word" }}>
             {profileLost
               ? "Профиль не найден. Пройди настройку заново."
               : `Не удалось получить ответ: ${sendError}`}
@@ -517,6 +558,24 @@ export default function Chat() {
       )}
 
       <div style={{ display: "flex", gap: 10, marginTop: 14, alignItems: "flex-end" }}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => sendImage(e.target.files?.[0])}
+        />
+
+        <button
+          className="btn btn-ghost"
+          style={{ padding: "13px 16px", height: 50 }}
+          disabled={sending || loadState !== "ready"}
+          title="Загрузить фото еды"
+          onClick={() => fileRef.current?.click()}
+        >
+          <Icon name="camera" size={19} />
+        </button>
+
         <textarea
           className="input"
           rows={1}

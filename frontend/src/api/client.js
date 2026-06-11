@@ -28,10 +28,11 @@ export class ApiError extends Error {
 }
 
 async function request(path, options = {}) {
+  const isFormData = options.body instanceof FormData;
   let res;
   try {
     res = await fetch(BASE_URL + path, {
-      headers: { "Content-Type": "application/json" },
+      headers: isFormData ? undefined : { "Content-Type": "application/json" },
       ...options,
     });
   } catch (e) {
@@ -75,6 +76,12 @@ export const api = {
   getChatMessages: (id) => request(`${p(id)}/chat/messages`),
   sendChatMessage: (content, id) =>
     request(`${p(id)}/chat/messages`, { method: "POST", body: JSON.stringify({ content }) }),
+  sendChatImage: (image, content = "", id) => {
+    const form = new FormData();
+    form.append("image", image);
+    form.append("content", content);
+    return request(`${p(id)}/chat/image`, { method: "POST", body: form });
+  },
 };
 
 /* Mifflin–St Jeor — mirrors backend app/services/nutrition.py exactly,

@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4-mini"
 
+    # Vision — распознавание еды по фото
+    vision_provider: str = "openai"
+    openai_vision_model: str = "gpt-4.1-mini"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
