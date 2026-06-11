@@ -55,26 +55,12 @@ def build_mock_assistant_reply(
 ) -> str:
     return (
         "Это тестовый ответ backend. AI-провайдер пока не подключён. "
-        "Проверьте LLM_PROVIDER и API-ключ в переменных окружения Render."
+        "Проверьте LLM_PROVIDER и OPENAI_API_KEY в переменных окружения Render."
     )
 
 
-def build_deepseek_assistant_reply(
-    profile: UserProfile,
-    message: str,
-    history: list[ChatMessage] | None = None,
-) -> str:
-    if not settings.deepseek_api_key:
-        raise ChatServiceError(
-            "DeepSeek API key не задан. Добавьте DEEPSEEK_API_KEY в Environment Variables на Render."
-        )
-
-    client = OpenAI(
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-    )
-
-    system_prompt = f"""
+def build_openai_system_prompt(profile: UserProfile) -> str:
+    return f"""
 Ты — AI-помощник продукта «КАЛОРИК».
 
 Твоя задача — помогать пользователю с ежедневным выбором питания:
@@ -92,26 +78,48 @@ def build_deepseek_assistant_reply(
 5. Не заменяй врача или диетолога.
 6. При вопросах про заболевания, РПП, беременность, диабет или строгие медицинские ограничения советуй обратиться к врачу/диетологу.
 7. Если пользователь спрашивает “что съесть”, предлагай 2–3 понятных варианта и объясняй, почему они подходят.
+8. Если у пользователя есть аллергии или ограничения, не предлагай продукты, которые им противоречат.
+9. Если пользователь просит оценить калории без точных граммов, честно указывай, что расчёт примерный.
 
 {build_profile_context(profile)}
 """.strip()
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        *build_history_messages(history),
-        {"role": "user", "content": message},
-    ]
+
+def build_openai_assistant_reply(
+    profile: UserProfile,
+    message: str,
+    history: list[ChatMessage] | None = None,
+) -> str:
+    if not settings.openai_api_key:
+        raise ChatServiceError(
+            "OpenAI API key не задан. Добавьте OPENAI_API_KEY в Environment Variables на Render."
+        )
+
+    client = OpenAI(api_key=settings.openai_api_key)
 
     try:
-        response = client.chat.completions.create(
-            model=settings.deepseek_model,
-            messages=messages,
-            stream=False,
+        response = client.responses.create(
+            model=settings.openai_model,
+            instructions=build_openai_system_prompt(profile),
+            input=[
+                *build_history_messages(history),
+                {
+                    "role": "user",
+                    "content": message,
+                },
+            ],
+            max_output_tokens=900,
         )
     except Exception as exc:
+        print(f"OpenAI chat error: {repr(exc)}", flush=True)
         raise ChatServiceError(str(exc)) from exc
 
-    return response.choices[0].message.content or "Не удалось сформировать ответ."
+    text = (response.output_text or "").strip()
+
+    if not text:
+        raise ChatServiceError("OpenAI returned an empty response")
+
+    return text
 
 
 def build_food_image_reply(
@@ -123,6 +131,7 @@ def build_food_image_reply(
 ) -> str:
     if settings.vision_provider.lower().strip() != "openai":
         raise ChatServiceError("Vision provider должен быть openai для анализа фото.")
+
     if not settings.openai_api_key:
         raise ChatServiceError(
             "OpenAI API key не задан. Добавьте OPENAI_API_KEY в Environment Variables на Render."
@@ -133,23 +142,26 @@ def build_food_image_reply(
     user_note = message.strip() or "Определи, что на фото, и примерно оцени КБЖУ блюда."
 
     client = OpenAI(api_key=settings.openai_api_key)
+
     system_prompt = f"""
 Ты — AI-помощник продукта «КАЛОРИК» и анализируешь фото еды.
 
 Задача:
 - определить, что за блюдо или продукты на фото;
 - дать примерную оценку калорий, белков, жиров и углеводов;
-- указать, насколько оценка уверенная;
-- если веса/состава не видно, честно написать, что это приблизительно;
-- предложить, как уточнить расчёт;
+- указать уверенность оценки;
+- если веса, состава или способа приготовления не видно, честно написать, что расчёт приблизительный;
+- предложить, какие данные нужно уточнить для более точного расчёта;
 - учитывать профиль, аллергии, религиозные ограничения и пищевые предпочтения.
 
 Правила:
 1. Отвечай на русском языке.
-2. Пиши кратко и практично.
+2. Пиши кратко и практически полезно.
 3. Не выдавай оценку как медицинскую рекомендацию.
-4. Если по фото нельзя уверенно понять блюдо, попроси вес/состав/способ приготовления.
-5. Не добавляй продукты в дневник сам — только дай анализ и предложи пользователю подтвердить.
+4. Не утверждай точную калорийность, если не знаешь вес порции.
+5. Если по фото нельзя уверенно понять блюдо, попроси уточнить вес, состав или способ приготовления.
+6. Не добавляй продукты в дневник сам — только дай анализ и предложи пользователю подтвердить.
+7. Если видишь потенциальный конфликт с аллергиями или ограничениями пользователя, отдельно предупреди об этом.
 
 {build_profile_context(profile)}
 """.strip()
@@ -166,11 +178,25 @@ def build_food_image_reply(
 Короткая история чата:
 {history_text or "Истории пока нет."}
 
-Верни ответ в таком формате:
+Верни ответ строго в таком формате:
+
 1. Что вижу на фото
+Коротко опиши предполагаемое блюдо.
+
 2. Примерная оценка КБЖУ
-3. Что уточнить для точного расчёта
-4. Как это вписать в день пользователя
+Калории: примерно ... ккал
+Белки: примерно ... г
+Жиры: примерно ... г
+Углеводы: примерно ... г
+
+3. Уверенность оценки
+Низкая / средняя / высокая. Объясни почему.
+
+4. Что уточнить
+Напиши, какие данные нужны для более точного расчёта.
+
+5. Как вписать в день
+Дай короткий совет с учётом цели пользователя.
 """.strip()
 
     try:
@@ -181,19 +207,28 @@ def build_food_image_reply(
                 {
                     "role": "user",
                     "content": [
-                        {"type": "input_text", "text": input_text},
-                        {"type": "input_image", "image_url": image_url},
+                        {
+                            "type": "input_text",
+                            "text": input_text,
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": image_url,
+                        },
                     ],
                 }
             ],
-            max_output_tokens=700,
+            max_output_tokens=900,
         )
     except Exception as exc:
+        print(f"OpenAI vision error: {repr(exc)}", flush=True)
         raise ChatServiceError(str(exc)) from exc
 
     text = (response.output_text or "").strip()
+
     if not text:
         raise ChatServiceError("OpenAI vision returned an empty response")
+
     return text
 
 
@@ -204,7 +239,12 @@ def build_assistant_reply(
 ) -> str:
     provider = settings.llm_provider.lower().strip()
 
-    if provider == "deepseek":
-        return build_deepseek_assistant_reply(profile, message, history)
+    if provider == "openai":
+        return build_openai_assistant_reply(profile, message, history)
 
-    return build_mock_assistant_reply(profile, message, history)
+    if provider == "mock":
+        return build_mock_assistant_reply(profile, message, history)
+
+    raise ChatServiceError(
+        f"Неизвестный AI-провайдер: {settings.llm_provider}. Используйте LLM_PROVIDER=openai."
+    )
