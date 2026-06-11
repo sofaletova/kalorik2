@@ -12,21 +12,17 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
     )
 
-    # Какой AI-провайдер используется: mock / openai / deepseek
+    # AI-провайдер для обычного текстового чата: mock / openai
     llm_provider: str = "mock"
 
-    # DeepSeek
-    deepseek_api_key: str | None = None
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-v4-flash"
-
-    # OpenAI — оставляем на будущее
+    # OpenAI для обычного чата
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.4-mini"
+    openai_model: str = "gpt-5.4"
 
-    # Vision — распознавание еды по фото
+    # OpenAI Vision для анализа еды по фото
     vision_provider: str = "openai"
     openai_vision_model: str = "gpt-4.1-mini"
+    max_food_photo_mb: int = 8
 
     model_config = SettingsConfigDict(
         env_file=".env",
